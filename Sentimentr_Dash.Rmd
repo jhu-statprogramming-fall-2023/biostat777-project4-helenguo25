@@ -1,0 +1,357 @@
+---
+title: "Sentimentr Example"
+output: 
+  flexdashboard::flex_dashboard:
+    source_code: embed
+    theme: 
+      bootswatch: lux
+    orientation: columns
+runtime: shiny
+---
+
+```{r global, include=FALSE}
+# Clear workspace
+rm(list=ls())
+
+# Load packages
+library(here)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(sentimentr)
+library(purrr)
+library(wordcloud)
+library(shiny)
+
+# Read in data - Uncomment all code below when knitting or running code for the first time
+# tuesdata <- tidytuesdayR::tt_load('2022-10-18')
+# dialogue <- tuesdata$stranger_things_all_dialogue
+#  
+# Tests if a directory named "data" exists locally using 'here'. 
+# If not, create "data" directory
+# if (!dir.exists(here("data"))) {
+#     dir.create(here("data"))}
+#  
+# Saves data only once
+# if (!file.exists(here("data", "dialogue.RDS"))) {
+#     saveRDS(dialogue, file = here("data", "dialogue.RDS"))}
+
+# Read in the .RDS dataset locally from our computing environment
+dialogue <- readRDS(here("data", "dialogue.RDS"))
+
+# Clean data
+dialogue_clean<- dialogue %>%
+  rename(dialogue_text=dialogue) %>% 
+  # Rename dialogue to dialogue_text to avoid confusion
+   # Keep only relevant columns 
+ select(season, episode, line, raw_text, dialogue_text)  %>%
+   # Remove NA and blank dialogue lines
+  filter(!is.na(dialogue_text) & dialogue_text != " ") 
+
+# View clean_data
+glimpse(dialogue_clean)
+
+# Two different sets of analysis: one dialogue-only text and one for raw text 
+text_list <- list(dialogue_clean$dialogue_text,dialogue_clean$raw_text)
+
+# Function to split lines of TV show script into individual sentences
+split_sentences <- function(text) {
+  output <- dialogue_clean %>%
+    mutate(sentences = sentimentr::get_sentences(text))
+      return(output)}
+
+# Call split_sentences for each set of analysis
+dialogue_split <- map(text_list, split_sentences)
+
+# Store both sets of text with sentences split
+input_list <- list(pluck(dialogue_split,1), pluck(dialogue_split,2))
+
+# Function to count emotions conveyed on sentence level
+emotion_analysis <- function(input) {
+  result <- with(
+    input, 
+    emotion_by(
+        get_sentences(input$sentences), 
+        list(season)))
+  
+  result_clean <- result %>%
+    arrange(season, desc(emotion_count))%>%
+    select(season,emotion_type, emotion_count)
+  
+  return (result_clean)}
+
+# Call emotions_analysis for each set of analysis
+emotion_results <- map_df(input_list, emotion_analysis, .id="text_source")
+
+# Function to get sentiment score on sentence level
+sentiment_analysis <- function(input) {
+  unnested_input <- input %>%
+    unnest(sentences)
+      score <- sentiment(input$sentences)
+        result <- bind_cols(unnested_input, score)
+          return(result)}
+
+# Call sentiment analysis for each set of analysis
+sentiment_results <- map(input_list,sentiment_analysis)
+
+# Store both sets of results from sentiment analysis
+input_list <- list(pluck(sentiment_results,1),pluck(sentiment_results,2))
+
+# Function to summarize mean and sd of sentiment scores
+get_means <- function(input) {
+  result <- input %>%
+  group_by(season) %>%
+  summarise(
+    mean_score = mean(sentiment),
+    sd_score = sd(sentiment))
+  
+  return(result)}
+
+# Call get_means for each set of analysis
+mean_sentiment_results <- map_df(input_list, get_means, .id = "text_source")
+```
+
+About
+==================
+
+Goals: 
+
+1) Evaluate the effectiveness/usefulness of the sentimentr package in R, which is used to account for how valence shifters ("not", "barely", "but", etc.) affect linguistic meaning on the sentence level. When applied to text, does it accurately pick up the effects of valence shifters? What are the advantages/disadvantages of using the sentimentr package to analyze text?
+
+2) Apply the sentimentr package to analyze the emotion/mood of dialogue in the television show Stranger Things. How does emotion/mood change throughout the seasons? Check if results remain similar after taking into account parenthetical notes in the dialogue.
+
+Audience:
+
+1) Fellow students in the JHSPH Biostatistics 140.777 Fall 2023 course, taught by Stephanie Hicks.
+
+Acknowledgements/References:
+
+1) The Sentimentr package was developed by Tyler Rinker. The most up-to-date version can be found at: <https://github.com/trinker/sentimentr>
+
+2) The TidyTuesday GitHub repo on dialogue in Stranger Things from 8flix.com is used for data analysis:  <https://github.com/rfordatascience/tidytuesday/tree/master/data/2022/2022-10-18>
+
+<iframe
+    width="640"
+    height="480"
+    src="https://youtube.com/embed/IQFpIBvUgR8"
+    frameborder="0"
+    allow="accelerometer; encrypted-media; gyroscope; picture-in-picture; web-share;" allowfullscreen></iframe>
+
+Data
+==================
+
+We use the TidyTuesday GitHub repo on dialogue in Stranger Things from 8flix.com: <https://github.com/rfordatascience/tidytuesday/tree/master/data/2022/2022-10-18>
+
+In particular, we use the stranger_things_all_dialogue data set (data dictionary can be found at: <https://github.com/rfordatascience/tidytuesday/tree/master/data/2022/2022-10-18#data-dictionary>)
+
+This data set contains information on season, episode, and dialogue per line spoken in the show. The dialogue_text column contains dialogue only, while the raw_text column includes parenthetical notes included by the show writers of the dialogue.
+```{r, include=TRUE, message=FALSE,fig.width = 8.5, fig.height=6}
+# Clean data
+DT::renderDataTable({glimpse(dialogue_clean)})
+```
+
+Emotions over time
+==================
+
+```{r, include=TRUE, message=FALSE,fig.width = 8.5, fig.height=6}
+# Bar plot of emotion count by emotion type and season
+ggplot(emotion_results, 
+  aes(x = reorder(emotion_type, -emotion_count), y = emotion_count, fill = season)) +
+geom_bar(stat = "identity") +
+labs(x = "Emotion",
+y = "Emotion count",
+title = "Emotion count by emotion type and season of Stranger Things",
+caption=
+  "Data source: TidyTuesday GitHub repository Stranger Things dialogue dataset (2022-10-18)",
+subtitle= "Trust, anticipation, and fear are the top 3 emotions expressed across seasons") +
+theme_minimal()+
+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+facet_grid(. ~ text_source, 
+  labeller = labeller(text_source= c("1" = "Dialogue-only text", "2" = "Raw text")))  
+```
+
+
+Emotion word clouds
+==================
+
+Column {data-width=650} {.sidebar}
+-----------------------------------------------------------------------
+```{r}
+# Season number input
+selectInput("n_season", label = "Season no.",
+            choices = c(1,2,3,4), selected = 1)
+```
+
+Column {data-width=650} 
+-----------------------------------------------------------------------
+
+#### Word cloud of top 10 emotions
+
+```{r, include=TRUE, message=FALSE,fig.width = 8.5, fig.height=8}
+# Make word cloud using dialogue_text text source
+renderPlot({
+  season_input <- as.numeric(input$n_season)
+  emotion_results_filtered <- subset(emotion_results, season == season_input & text_source =="1")
+  
+  # Get the top 10 words
+  top_10_words <- head(emotion_results_filtered$emotion_type, 10)
+  top_10_freq <- head(emotion_results_filtered$emotion_count, 10)
+  
+  # Title
+  title <- paste("Top 10 most common emotions in Stranger Things - Season", input$n_season)
+  
+  # Adjust the plot parameters to get words to fit
+  wordcloud(words = top_10_words, freq = top_10_freq, main = title, scale = c(3, 0.5), 
+            min.freq = 1, colors = brewer.pal(8, "Dark2")) })
+
+```
+
+
+Scores over time
+==================
+
+Column {data-width=650} {.tabset}
+-----------------------------------------------------------------------
+
+### Without error bars
+
+```{r, include=TRUE, message=FALSE,fig.width = 8.5, fig.height=6}
+# Line plot of mean sentiment score by season
+ggplot(mean_sentiment_results, aes(x = season, y = mean_score)) +
+geom_line() +
+labs(x = "Season of Stranger Things",
+y = "Mean sentiment score",
+title = "Mean sentiment score by season of Stranger Things",
+caption=
+  "Data source: TidyTuesday GitHub repository Stranger Things dialogue dataset (2022-10-18)",
+subtitle="Mean sentiment score decreased across seasons") +
+theme_minimal()+
+facet_grid(. ~ text_source, 
+  labeller = labeller(text_source= c("1" = "Dialogue-only text", "2" = "Raw text")))  
+```
+
+### With error bars
+
+```{r, include=TRUE, message=FALSE,fig.width = 8.5, fig.height=6}
+# Line plot of mean sentiment score by season w/ error bars
+ggplot(mean_sentiment_results, aes(x = season, y = mean_score)) +
+geom_line() +
+geom_errorbar(aes(ymin = mean_score - sd_score, ymax = mean_score + sd_score), width=0.2) + 
+labs(x = "Season of Stranger Things",
+y = "Mean sentiment score (SD)",
+title = "Mean sentiment score by season of Stranger Things",
+caption=
+  "Data source: TidyTuesday GitHub repository Stranger Things dialogue dataset (2022-10-18)",
+subtitle="Decrease in mean sentiment score across seasons is not significant") +
+theme_minimal()+
+facet_grid(. ~ text_source, 
+  labeller = labeller(text_source= c("1" = "Dialogue-only text", "2" = "Raw text")))  
+```
+
+Sentence scores
+==================
+Column {data-width=650} {.sidebar}
+-----------------------------------------------------------------------
+```{r}
+# Season number and episode number inputs
+selectInput("season_adjust", label = "Season no.",
+            choices = c(1,2,3,4), selected = 1)
+
+sliderInput("episode_adjust", label = "Episode adjustment",
+            min = 1, max = 9, value = 1, step = 1)
+```
+
+Column {data-width=650} 
+-----------------------------------------------------------------------
+
+#### 20 sentences with highest sentiment scores
+
+```{r, include=TRUE, message=FALSE,fig.width = 8.5, fig.height=6}
+# Show 20 sentences with highest sentiment scores from dialogue_text
+sentiment_results_subset <- reactive({
+  pluck(sentiment_results, 1) %>%
+    arrange(desc(sentiment)) })
+
+renderPrint({
+  # Print top sentences
+  test <- sentiment_results_subset() %>%
+    filter(season == input$season_adjust & episode == input$episode_adjust) %>%
+    head(20)
+
+  # Check if any data selected
+  if (nrow(test) >0) {
+    print(test$sentences)
+  } else {
+    print("No more episodes.") } })
+```
+
+
+#### 20 sentences with lowest sentiment scores
+
+```{r, include=TRUE, message=FALSE,fig.width = 8.5, fig.height=6}
+# Show 20 sentences with lowest sentiment scores from dialogue_text
+sentiment_results_subset <- reactive({
+  pluck(sentiment_results, 1) %>%
+    arrange(desc(sentiment)) })
+
+renderPrint({
+  # Print top sentences
+  test <- sentiment_results_subset() %>%
+    filter(season == input$season_adjust & episode == input$episode_adjust) %>%
+    tail(20)
+
+  # Check if any data selected
+  if (nrow(test) >0) {
+    print(test$sentences)
+  } else {
+    print("No more episodes.") } })
+```
+
+Analysis
+==================
+
+Row {data-width=650} 
+-----------------------------------------------------------------------
+
+From both the dialogue-only text and raw text analyses, we can see that the seasons of Stranger Things have a higher emotion count as the show progresses, but the primary emotions and proportions of emotions conveyed remains similar across seasons. Users can explore the emotion word clouds to see the top 10 emotions by season in the dialogue-only text. These trends do not vary much between the dialogue-only text and raw text (with parenthetical notes). 
+
+```{r, include=TRUE, message=FALSE,fig.width = 8.5, fig.height=6}
+# Bar plot of emotion count by emotion type and season
+ggplot(emotion_results, 
+  aes(x = reorder(emotion_type, -emotion_count), y = emotion_count, fill = season)) +
+geom_bar(stat = "identity") +
+labs(x = "Emotion",
+y = "Emotion count",
+title = "Emotion count by emotion type and season of Stranger Things",
+caption=
+  "Data source: TidyTuesday GitHub repository Stranger Things dialogue dataset (2022-10-18)",
+subtitle= "Trust, anticipation, and fear are the top 3 emotions expressed across seasons") +
+theme_minimal()+
+theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1)) +
+facet_grid(. ~ text_source, 
+  labeller = labeller(text_source= c("1" = "Dialogue-only text", "2" = "Raw text")))  
+```
+
+Although mean sentiment score decreases slightly across seasons in both sets of analyses, this decrease is not significant. Users should note that one disadvantage of sentence-level linguistic analysis functions such as sentimentr is that emotion may not vary as much on the sentence level compared to the word level, so significant nuances in emotional changes may occur more rarely.
+
+```{r, include=TRUE, message=FALSE,fig.width = 8.5, fig.height=6}
+# Line plot of mean sentiment score by season w/ error bars
+ggplot(mean_sentiment_results, aes(x = season, y = mean_score)) +
+geom_line() +
+geom_errorbar(aes(ymin = mean_score - sd_score, ymax = mean_score + sd_score), width=0.2) + 
+labs(x = "Season of Stranger Things",
+y = "Mean sentiment score (SD)",
+title = "Mean sentiment score by season of Stranger Things",
+caption=
+  "Data source: TidyTuesday GitHub repository Stranger Things dialogue dataset (2022-10-18)",
+subtitle="Decrease in mean sentiment score across seasons is not significant") +
+theme_minimal()+
+facet_grid(. ~ text_source, 
+  labeller = labeller(text_source= c("1" = "Dialogue-only text", "2" = "Raw text")))  
+```
+
+From looking at the top 20 sentences with the highest and lowest sentiment scores across seasons, there are strong indications of the package working to parse out the effects of valence shifters. For example, included in the top 20 sentences with the lowest sentiment score in Season 1 Episode 7 is "I don't understand." However, the package seems to fail to detecting sarcasm. For example, included in the top 20 sentences with the highest sentiment score in Season 2 Episode 3 is "Funny."
+
+Overall, the sentimentr package provides stark benefits by taking valence shifters ("not", "barely", "but", etc.) into account. Pitfalls include inability to detect sarcasm and less variation of emotion may generally be detected from the sentence level (compared to the word level).
+
+

@@ -1,0 +1,10 @@
+name: dashboard
+title:
+username: helenguo
+account: helenguo
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 10840483
+bundleId: 8077015
+url: https://helenguo.shinyapps.io/dashboard/
+version: 1
